@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import QuartzCore
 
 @main
 struct CodexUsageCardApp {
@@ -60,6 +61,146 @@ final class GlassPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+/// 透明动画层：让卡片以图层动画被菜单栏的圆角形状接住并收口。
+private final class SuctionAnimationPanel: NSPanel {
+    let animationView: SuctionAnimationView
+
+    init(overlayFrame: NSRect, image: NSImage, sourceFrame: NSRect, targetFrame: NSRect) {
+        animationView = SuctionAnimationView(
+            frame: NSRect(origin: .zero, size: overlayFrame.size),
+            image: image,
+            sourceFrame: sourceFrame,
+            targetFrame: targetFrame,
+            overlayFrame: overlayFrame
+        )
+        super.init(contentRect: overlayFrame,
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered,
+                   defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        ignoresMouseEvents = true
+        contentView = animationView
+    }
+}
+
+private final class AnimationCompletionDelegate: NSObject, CAAnimationDelegate {
+    private let onFinished: () -> Void
+
+    init(onFinished: @escaping () -> Void) {
+        self.onFinished = onFinished
+    }
+
+    func animationDidStop(_ anim: CAAnimation, finished flag: Bool) {
+        onFinished()
+    }
+}
+
+/// 图层化动画保留内容比例，并通过圆角裁切模拟灵动岛的接住与收口。
+private final class SuctionAnimationView: NSView {
+    private let image: NSImage
+    private let sourceFrame: NSRect
+    private let targetFrame: NSRect
+    private let overlayFrame: NSRect
+    private let snapshotLayer = CALayer()
+    private var animationCompletion: AnimationCompletionDelegate?
+    private var completionHandler: (() -> Void)?
+
+    init(frame: NSRect, image: NSImage, sourceFrame: NSRect, targetFrame: NSRect, overlayFrame: NSRect) {
+        self.image = image
+        self.sourceFrame = sourceFrame
+        self.targetFrame = targetFrame
+        self.overlayFrame = overlayFrame
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func start(completion: @escaping () -> Void) {
+        guard animationCompletion == nil, let hostLayer = layer else { return }
+        completionHandler = completion
+
+        let source = localFrame(sourceFrame)
+        let target = localFrame(targetFrame)
+        let receiving = localFrame(MinimizeAnimationGeometry.receivingFrame(around: targetFrame))
+        let sourceCenter = CGPoint(x: source.midX, y: source.midY)
+        let targetCenter = CGPoint(x: target.midX, y: target.midY)
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        snapshotLayer.frame = source
+        snapshotLayer.contents = snapshotCGImage()
+        snapshotLayer.contentsGravity = .resizeAspectFill
+        snapshotLayer.contentsScale = scale
+        snapshotLayer.cornerRadius = 28
+        snapshotLayer.masksToBounds = true
+        hostLayer.addSublayer(snapshotLayer)
+        CATransaction.commit()
+
+        let duration: CFTimeInterval = 0.54
+        let pathAnimation = CAKeyframeAnimation(keyPath: "position")
+        let path = CGMutablePath()
+        path.move(to: sourceCenter)
+        let delta = CGPoint(x: target.midX - source.midX, y: target.midY - source.midY)
+        path.addCurve(
+            to: targetCenter,
+            control1: CGPoint(x: source.midX + delta.x * 0.22, y: source.midY + delta.y * 0.08),
+            control2: CGPoint(x: target.midX - delta.x * 0.18, y: target.midY - delta.y * 0.36)
+        )
+        pathAnimation.path = path
+        pathAnimation.calculationMode = .cubicPaced
+
+        let boundsAnimation = CAKeyframeAnimation(keyPath: "bounds.size")
+        boundsAnimation.values = [
+            NSValue(size: source.size),
+            NSValue(size: NSSize(width: source.width * 0.76, height: source.height * 0.76)),
+            NSValue(size: receiving.size),
+            NSValue(size: NSSize(width: target.width * 1.18, height: target.height * 1.18)),
+            NSValue(size: target.size),
+        ]
+        boundsAnimation.keyTimes = [0, 0.45, 0.77, 0.90, 1]
+
+        let cornerAnimation = CAKeyframeAnimation(keyPath: "cornerRadius")
+        cornerAnimation.values = [28, 28, receiving.height / 2, target.height / 2, target.height / 2]
+        cornerAnimation.keyTimes = [0, 0.45, 0.77, 0.90, 1]
+
+        let snapshotGroup = CAAnimationGroup()
+        snapshotGroup.animations = [pathAnimation, boundsAnimation, cornerAnimation]
+        snapshotGroup.duration = duration
+        snapshotGroup.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.84, 0.20, 1)
+        snapshotGroup.fillMode = .forwards
+        snapshotGroup.isRemovedOnCompletion = false
+        let delegate = AnimationCompletionDelegate { [weak self] in self?.finish() }
+        animationCompletion = delegate
+        snapshotGroup.delegate = delegate
+
+        snapshotLayer.add(snapshotGroup, forKey: "suction")
+    }
+
+    private func localFrame(_ frame: NSRect) -> CGRect {
+        frame.offsetBy(dx: -overlayFrame.minX, dy: -overlayFrame.minY)
+    }
+
+    private func snapshotCGImage() -> CGImage? {
+        guard let data = image.tiffRepresentation,
+              let representation = NSBitmapImageRep(data: data)
+        else { return nil }
+        return representation.cgImage
+    }
+
+    private func finish() {
+        completionHandler?()
+        completionHandler = nil
+        animationCompletion = nil
+    }
 }
 
 final class DragHostingView<Content: View>: NSHostingView<Content> {
@@ -164,6 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: GlassPanel?
     private var statusItem: NSStatusItem?
     private var statusView: UsageMenuBarView?
+    private var minimizeAnimationPanel: NSPanel?
+    private var isMinimizing = false
     private var bag = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -257,8 +400,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 减号代表收起到系统菜单栏；恢复入口始终是顶部的用量图标。
     private func minimizeToMenuBar() {
+        guard !isMinimizing else { return }
         store.collapsed = false
-        panel?.orderOut(nil)
+        guard let panel,
+              panel.isVisible,
+              let menuBarItemFrame = menuBarItemFrameOnScreen(),
+              let image = snapshot(of: panel)
+        else {
+            panel?.orderOut(nil)
+            return
+        }
+
+        isMinimizing = true
+        let targetFrame = MinimizeAnimationGeometry.targetFrame(in: menuBarItemFrame)
+        let overlayFrame = MinimizeAnimationGeometry.animationOverlayFrame(from: panel.frame, to: targetFrame)
+        let snapshotPanel = SuctionAnimationPanel(overlayFrame: overlayFrame,
+                                                  image: image,
+                                                  sourceFrame: panel.frame,
+                                                  targetFrame: targetFrame)
+        minimizeAnimationPanel = snapshotPanel
+        snapshotPanel.orderFrontRegardless()
+        panel.orderOut(nil)
+        snapshotPanel.animationView.start { [weak self, weak snapshotPanel] in
+            Task { @MainActor [weak self, weak snapshotPanel] in
+                snapshotPanel?.orderOut(nil)
+                self?.minimizeAnimationPanel = nil
+                self?.isMinimizing = false
+            }
+        }
+    }
+
+    /// 截取当前卡片，避免窗口缩小时触发布局重排，从而得到连续的缩放效果。
+    private func snapshot(of panel: NSPanel) -> NSImage? {
+        guard let contentView = panel.contentView,
+              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds)
+        else { return nil }
+        contentView.cacheDisplay(in: contentView.bounds, to: bitmap)
+        let image = NSImage(size: contentView.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
+    /// 将自绘菜单栏视图的本地坐标转换为屏幕坐标，作为动画的真实终点。
+    private func menuBarItemFrameOnScreen() -> NSRect? {
+        guard let statusView, let menuBarWindow = statusView.window else { return nil }
+        let windowFrame = statusView.convert(statusView.bounds, to: nil)
+        return menuBarWindow.convertToScreen(windowFrame)
     }
 
     private func place(panel: NSPanel, size: NSSize) {
@@ -307,15 +494,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusView = UsageMenuBarView(frame: NSRect(x: 0, y: 0,
                                                         width: UsageMenuBarView.width,
                                                         height: UsageMenuBarView.height))
-        statusView.onPrimaryAction = { [weak self, weak statusView] in
-            guard let self, let statusView else { return }
-            self.showStatusMenu(in: statusView)
-        }
+        // 左键直接切换卡片；再次点击即隐藏到菜单栏。
+        statusView.onPrimaryAction = { [weak self] in self?.toggleClicked() }
         statusView.onSecondaryAction = { [weak self, weak statusView] in
             guard let self, let statusView else { return }
             self.showStatusMenu(in: statusView)
         }
-        item.view = statusView
+        guard let button = item.button else {
+            CardLog.write("菜单栏按钮创建失败")
+            return
+        }
+        statusView.frame = button.bounds
+        statusView.autoresizingMask = [.width, .height]
+        button.addSubview(statusView)
         statusItem = item
         self.statusView = statusView
     }

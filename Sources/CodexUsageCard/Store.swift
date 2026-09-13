@@ -296,14 +296,17 @@ final class UsageStore: ObservableObject {
     }
 
     func notify(_ body: String) {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = "Codex 用量"
-            content.body = body
-            content.sound = .default
-            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            DispatchQueue.main.async {
+                let content = UNMutableNotificationContent()
+                content.title = "Codex 用量"
+                content.body = body
+                content.sound = .default
+                UNUserNotificationCenter.current().add(
+                    UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                )
+            }
         }
     }
 

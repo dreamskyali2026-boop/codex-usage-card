@@ -27,8 +27,15 @@ if ! rg --fixed-strings --quiet "item.isVisible = true" "$SOURCE"; then
   exit 1
 fi
 
-if ! rg --fixed-strings --quiet "item.view = statusView" "$SOURCE" || ! rg --fixed-strings --quiet "statusView.update(usedPercent:" "$SOURCE"; then
-  echo "FAIL: 菜单栏项目尚未显示应用自绘的用量圆环和百分比。"
+if rg --fixed-strings --quiet "item.view = statusView" "$SOURCE"; then
+  echo "FAIL: 菜单栏仍在使用已弃用的 NSStatusItem.view。"
+  exit 1
+fi
+
+if ! rg --fixed-strings --quiet "item.button" "$SOURCE" \
+   || ! rg --fixed-strings --quiet "button.addSubview(statusView)" "$SOURCE" \
+   || ! rg --fixed-strings --quiet "statusView.update(usedPercent:" "$SOURCE"; then
+  echo "FAIL: 菜单栏按钮尚未承载自绘用量圆环和百分比。"
   exit 1
 fi
 
@@ -47,14 +54,14 @@ if ! rg --fixed-strings --quiet "UsagePalette.alertTint(for: usedPercent)" "$SOU
   exit 1
 fi
 
-if rg --fixed-strings --quiet "onPrimaryAction = { [weak self] in self?.toggleClicked() }" "$SOURCE"; then
-  echo "FAIL: 左键仍会直接打开卡片，而不是弹出选项菜单。"
+if ! rg --fixed-strings --quiet "onPrimaryAction = { [weak self] in self?.toggleClicked() }" "$SOURCE"; then
+  echo "FAIL: 左键没有直接显示或隐藏卡片。"
   exit 1
 fi
 
-MENU_ACTIONS=$(rg --fixed-strings --count "self.showStatusMenu(in: statusView)" "$SOURCE" || true)
-if [ "$MENU_ACTIONS" -lt 2 ]; then
-  echo "FAIL: 左键和右键没有同时连接到选项菜单。"
+if ! rg --fixed-strings --quiet "onSecondaryAction = { [weak self, weak statusView] in" "$SOURCE" \
+   || ! rg --fixed-strings --quiet "self.showStatusMenu(in: statusView)" "$SOURCE"; then
+  echo "FAIL: 右键没有保留操作菜单。"
   exit 1
 fi
 
