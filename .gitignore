@@ -1,0 +1,13 @@
+# Swift Package Manager build products
+.build/
+
+# Locally assembled macOS application
+Codex用量.app/
+
+# macOS Finder metadata
+.DS_Store
+
+# Local reference images, not required to build the project
+qrcode.png
+qrcode2.png
+预览-卡片实拍.png
