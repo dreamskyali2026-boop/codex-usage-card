@@ -3,6 +3,12 @@
 macOS 26（Tahoe）原生的桌面悬浮小卡片，用真正的 **Liquid Glass（液态玻璃）** 材质实时显示
 OpenAI Codex 的额度用量与重置倒计时。无 Dock 图标，只住在菜单栏和桌面上。
 
+## 卡片预览
+
+![Codex 用量卡片实时预览（账号信息已脱敏）](docs/card-preview.png)
+
+上图为本机实时读取后的卡片画面，账号信息已脱敏；额度和倒计时会随刷新而变化。
+
 ## 它显示什么
 
 - **5 小时窗口**：环形仪表 + 已用百分比 + `HH:MM:SS` 重置倒计时 + 重置的绝对时间
@@ -77,6 +83,7 @@ Sources/CodexUsageCard/
   Icon.swift                      应用图标离屏绘制
 build.sh / make_icon.sh           打包脚本
 Assets/AppIcon.icns               生成的图标
+docs/card-preview.png             README 展示图（实时界面，已脱敏）
 ```
 
 ## 常见问题
